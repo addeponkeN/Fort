@@ -13,19 +13,18 @@ public class NetEvents
 
 public abstract class NetBase
 {
+	protected object SendPacketLock = new object();
+
 	public NetManager Manager { get; private set; }
 	internal EventBasedNetListener NetListener { get; set; }
-
-	internal object SendPacketLock = new object();
-	internal PacketFactory PacketFactory = new();
-	internal PacketListener PacketListener;
-	internal NetDataWriter PacketWriter = new();
+	public PacketFactory PacketFactory { get; private set; } = new();
+	public PacketListener PacketListener { get; private set; }
+	public NetDataWriter PacketWriter { get; private set; } = new();
+	public bool IsRunning { get; set; }
 
 	public event NetEvents.OnPacketReceived PacketReceivedEvent;
 
-	public bool IsRunning { get; set; }
-
-	public NetBase()
+	protected NetBase()
 	{
 		NetListener = new EventBasedNetListener();
 		Manager = new(NetListener);
@@ -43,6 +42,13 @@ public abstract class NetBase
 		if (!IsRunning) return;
 
 		Manager.PollEvents();
+	}
+
+	protected void WritePacket<T>(T packet) where T : IPacket
+	{
+		var packetType = PacketFactory.GetPacketId<T>();
+		PacketWriter.Put(packetType);
+		packet.Serialize(PacketWriter);
 	}
 }
 
@@ -68,22 +74,26 @@ public class NetServer : NetBase
 	private void NetListenerPeerConnectedEvent(NetPeer peer) => PeerConnectedEvent?.Invoke(peer);
 	private void NetListenerPeerDisconnectedEvent(NetPeer peer, DisconnectInfo disconnectInfo) => PeerDisconnectedEvent?.Invoke(peer, disconnectInfo);
 
-	private void WritePacket<T>(T packet) where T : IPacket
-	{
-		var packetType = PacketFactory.GetPacketId<T>();
-		PacketWriter.Put(packetType);
-		packet.Serialize(PacketWriter);
-	}
-
-	public void SendPacket<T>(NetPeer peer, T packet) where T : IPacket
+	public void SendPacket<T>(T packet, NetPeer peer) where T : IPacket
 	{
 		lock (SendPacketLock)
 		{
 			PacketWriter.Reset();
-
 			WritePacket(packet);
-
 			peer.Send(PacketWriter, DeliveryMethod.ReliableOrdered);
+		}
+	}
+
+	public void SendPacket<T>(T packet, IEnumerable<NetPeer> peers) where T : IPacket
+	{
+		lock (SendPacketLock)
+		{
+			PacketWriter.Reset();
+			WritePacket(packet);
+			foreach (var peer in peers)
+			{
+				peer.Send(PacketWriter, DeliveryMethod.ReliableOrdered);
+			}
 		}
 	}
 }
@@ -97,7 +107,12 @@ public class NetClient : NetBase
 		Manager.Connect(address, port, key);
 
 		OnStart();
-
 	}
 
+	public void Send(IPacket packet)
+	{
+		PacketWriter.Reset();
+		WritePacket(packet);
+		Manager.FirstPeer.Send(PacketWriter, DeliveryMethod.ReliableOrdered);
+	}
 }
