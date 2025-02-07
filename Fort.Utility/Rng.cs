@@ -4,159 +4,104 @@ namespace Fort.Utility;
 
 public static class Rng
 {
-    private static Random _rnd;
-    private static Random rnd => _rnd ??= new Random();
+	private static FortRandom _rnd;
+	private static FortRandom Rnd => _rnd ??= new FortRandom();
 
-    public static int Next(int min, int max) => rnd.Next(min, max + 1);
-    public static int Next(int max) => rnd.Next(max + 1);
+	public static int Next() => Rnd.Next();
+	public static int Next(int max) => Rnd.Next(max);
+	public static int Next(int min, int max) => Rnd.Next(min, max);
 
-    public static double NextDouble()
-    {
-        return rnd.NextDouble();
-    }
+	public static double NextDouble() => Rnd.NextDouble();
+	public static double NextDouble(double min, double max) => Rnd.NextDouble(min, max);
+	public static double NextDouble(double max) => Rnd.NextDouble(max);
 
-    public static double NextDouble(double min, double max)
-    {
-        return rnd.NextDouble() + rnd.Next((int)min, (int)max + 1);
-    }
+	public static float NextFloat() => Rnd.NextFloat();
+	public static float NextFloat(float max) => Rnd.NextFloat(max);
+	public static float NextFloat(float min, float max) => Rnd.NextFloat(min, max);
 
-    public static double NextDouble(double max)
-    {
-        return rnd.NextDouble() + rnd.Next(0, (int)max + 1);
-    }
+	public static string Choose(params string[] entries) => Rnd.Choose(entries);
+	public static int Choose(params int[] entries) => Rnd.Choose(entries);
+	public static float Choose(params float[] entries) => Rnd.Choose(entries);
+	public static T Choose<T>(params T[] entries) => Rnd.Choose(entries);
 
-    public static float NextFloat()
-    {
-        return (float)rnd.NextDouble();
-    }
+	public static int Range(int range) => Rnd.Range(range);
+	public static float Range(float range) => Rnd.Range(range);
 
-    public static float NextFloat(float max)
-    {
-        return NextFloat(0f, max);
-    }
+	public static bool Roll(int chance) => Rnd.Roll(chance);
 
-    public static float NextFloat(float min, float max)
-    {
-        return (float)rnd.NextDouble() * (max - min) + min;
-    }
+	public static bool NextBool => Rnd.NextBool;
+	public static int RandomSeed => Rnd.RandomSeed;
+	public static int RandomAlpha => Rnd.RandomAlpha;
 
-    public static string Choose(params string[] entries) => entries[Next(entries.Length - 1)];
-    public static int Choose(params int[] entries) => entries[Next(entries.Length - 1)];
-    public static float Choose(params float[] entries) => entries[Next(entries.Length - 1)];
-    public static T Choose<T>(params T[] entries) => entries[Next(entries.Length - 1)];
-
-    public static int Range(int range) => Next(-range, range);
-    public static float Range(float range) => NextFloat(-range, range);
-
-    public static bool NextBool => Next(1) == 1 ? false : true;
-
-    public static bool Roll(int chance) => chance >= Next(100);
-
-    public static int RandomSeed => Rng.Next(int.MaxValue - 1);
-
-    public static T Random<T>(this T[] items)
-    {
-        int length = items.Length;
-        if (length < 1)
-            return default!;
-        return items.ElementAt(Next(length - 1));
-    }
-
-    public static T Random<T>(this IList<T> items)
-    {
-        int length = items.Count;
-        if (length < 1)
-            return default!;
-        return items.ElementAt(Next(length - 1));
-    }
-
-    public static int RandomAlpha => Rng.Next(255);
-
-
-	//public static Vector2 RngDirection => Vector2.Normalize(new Vector2(Rng.NextFloat(-1f, 1f), Rng.NextFloat(-1, 1f)));
-
-	//public static Color RandomColor()
-	//{
-	//    return new Color(Rng.Next(255), Rng.Next(255), Rng.Next(255));
-	//}
-
-	//public static Vector2 PositionInRadius(float radius, Vector2 position)
-	//{
-	//    return new Vector2(
-	//        position.X + MathF.Sin(Rng.NextFloat(MathF.PI * 2f)) * radius,
-	//        position.Y + MathF.Cos(Rng.NextFloat(MathF.PI * 2f)) * radius);
-	//}
-
-	//public static Vector2 PositionOnCircle(float radius, Vector2 position)
-	//{
-	//    return new Vector2(
-	//        position.X + MathF.Sin(Rng.NextFloat(MathF.PI * 2)) * radius,
-	//        position.Y + MathF.Cos(Rng.NextFloat(MathF.PI * 2)) * radius);
-	//}
+	public static T Random<T>(this T[] items) => Rnd.Random(items);
+	public static T Random<T>(this IList<T> items) => Rnd.Random(items);
+	public static T RandomPop<T>(this IList<T> items) => Rnd.RandomPopItem(items);
 }
 
-public class OboRandom
+public class FortRandom
 {
-    public int Seed { get; set; }
+	public int Seed { get; private set; }
 
-    public Random rnd;
+	public Random BaseRandom;
 
-    public OboRandom() : this(Rng.RandomSeed) { }
-    public OboRandom(int seed)
-    {
-        Seed = seed;
-        rnd = new Random(seed);
-    }
+	public FortRandom() : this(System.Random.Shared.Next()) { }
+	public FortRandom(int seed)
+	{
+		Seed = seed;
+		BaseRandom = new Random(seed);
+	}
 
-    public int Next(int max) => Next(0, max);
+	public int Next() => BaseRandom.Next();
+	public int Next(int max) => Next(0, max);
+	public int Next(int min, int max) => BaseRandom.Next(min, max + 1);
 
-    public int Next(int min, int max)
-    {
-        return rnd.Next(min, max + 1);
-    }
+	public double NextDouble() => BaseRandom.NextDouble();
+	public double NextDouble(double min, double max) => BaseRandom.NextDouble() + BaseRandom.Next((int)min, (int)max + 1);
+	public double NextDouble(double max) => NextDouble(0, max);
 
-    public int Choose(params int[] n) => n[Next(0, n.Length - 1)];
+	public float NextFloat() => BaseRandom.NextSingle();
+	public float NextFloat(float max) => NextFloat(0f, max);
+	public float NextFloat(float min, float max) => BaseRandom.NextSingle() * (max - min) + min;
 
-    public float NextFloat(float min, float max)
-    {
-        return (float)rnd.NextDouble() * (max - min) + min;
-    }
+	public int Range(int range) => BaseRandom.Next(-range, range);
+	public float Range(float range) => NextFloat(-range, range);
 
-    public float NextFloat(float max)
-    {
-        return NextFloat(0f, max);
-    }
-    public float NextFloat()
-    {
-        return NextFloat(0f, 1f);
-    }
+	public string Choose(params string[] entries) => entries[Next(entries.Length - 1)];
+	public int Choose(params int[] entries) => entries[Next(entries.Length - 1)];
+	public float Choose(params float[] entries) => entries[Next(entries.Length - 1)];
+	public T Choose<T>(params T[] entries) => entries[Next(entries.Length - 1)];
 
-    public bool Roll(float chance) => chance >= NextFloat(100);
+	public bool Roll(float chance) => chance >= NextFloat(100);
 
-    public bool NextBool => Next(1) == 1 ? false : true;
+	public bool NextBool => Next(1) != 1;
+	public int RandomSeed => Next(int.MaxValue - 1);
+	public int RandomAlpha => BaseRandom.Next(255);
 
-    public int RandomSeed => Next(int.MaxValue - 1);
+	public T Random<T>(T[] items)
+	{
+		int length = items.Length;
+		if (length < 1)
+			return default!;
+		return items[Next(length - 1)];
+	}
 
-    public T RandomItem<T>(IEnumerable<T> list)
-    {
-        var c = list.Count();
-        if (c == 0)
-            return default!;
-        return list.ElementAt(Next(c - 1));
-    }
+	public T Random<T>(IList<T> items)
+	{
+		int length = items.Count;
+		if (length < 1)
+			return default!;
+		return items[Next(length - 1)];
+	}
 
-    public T RandomPopItem<T>(List<T> list)
-    {
-        var c = list.Count;
-        if (c == 0)
-            return default!;
+	public T RandomPopItem<T>(IList<T> list)
+	{
+		var c = list.Count;
+		if (c == 0)
+			return default!;
 
-        int i = Next(c - 1);
-        var item = list[i];
-        list.RemoveAt(i);
-        return item;
-    }
+		int i = Next(c - 1);
+		var item = list[i];
+		list.RemoveAt(i);
+		return item;
+	}
 }
-
-
-
