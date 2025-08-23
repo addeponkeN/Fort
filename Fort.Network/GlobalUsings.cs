@@ -1,3 +1,3 @@
 // Global using directives
 
-global using PacketDataType = byte;
+global using MessageDataType = byte;

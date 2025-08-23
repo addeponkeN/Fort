@@ -2,4 +2,4 @@
 
 namespace Fort.Network;
 
-public interface IPacket : INetSerializable;
+public interface IMessage : INetSerializable;

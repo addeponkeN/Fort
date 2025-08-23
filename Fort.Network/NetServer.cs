@@ -8,34 +8,42 @@ public class NetEvents
 	public delegate void OnConnectionRequest(ConnectionRequest request);
 	public delegate void OnPeerConnected(NetPeer peer);
 	public delegate void OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo);
-	public delegate void OnPacketReceived(NetPeer peer, IPacket packet, PacketDataType type);
+	public delegate void OnMessageReceived(NetPeer peer, IMessage message, Byte type);
 }
 
 public abstract class NetBase
 {
-	protected object SendPacketLock = new object();
+	protected object SendMessageLock = new object();
 
 	public NetManager Manager { get; private set; }
 	internal EventBasedNetListener NetListener { get; set; }
-	public PacketFactory PacketFactory { get; private set; } = new();
-	public PacketListener PacketListener { get; private set; }
-	public NetDataWriter PacketWriter { get; private set; } = new();
+	public MessageFactory MessageFactory { get; private set; } = new();
+	public MessageListener MessageListener { get; private set; }
+	public NetDataWriter MessageWriter { get; private set; } = new();
 	public bool IsRunning { get; set; }
 
-	public event NetEvents.OnPacketReceived PacketReceivedEvent;
+	public event NetEvents.OnMessageReceived MessageReceivedEvent;
 
 	protected NetBase()
 	{
 		NetListener = new EventBasedNetListener();
 		Manager = new(NetListener);
 
-		PacketListener = new(this);
+		MessageListener = new(this);
 	}
 
 	protected void OnStart()
 	{
-		PacketListener.PacketReceivedEvent += (peer, packet, type) => PacketReceivedEvent?.Invoke(peer, packet, type);
+		MessageListener.MessageReceivedEvent += MessageListenerMessageReceivedEvent;
 	}
+
+	protected void OnStop()
+	{
+		MessageListener.MessageReceivedEvent -= MessageListenerMessageReceivedEvent;
+	}
+
+	private void MessageListenerMessageReceivedEvent(NetPeer peer, IMessage message, byte type)
+		=> MessageReceivedEvent?.Invoke(peer, message, type);
 
 	public void Update()
 	{
@@ -44,11 +52,11 @@ public abstract class NetBase
 		Manager.PollEvents();
 	}
 
-	protected void WritePacket<T>(T packet) where T : IPacket
+	protected void WriteMessage<T>(T message) where T : IMessage
 	{
-		var packetType = PacketFactory.GetPacketId<T>();
-		PacketWriter.Put(packetType);
-		packet.Serialize(PacketWriter);
+		var messageType = MessageFactory.GetMessageId<T>();
+		MessageWriter.Put(messageType);
+		message.Serialize(MessageWriter);
 	}
 }
 
@@ -70,29 +78,43 @@ public class NetServer : NetBase
 		NetListener.PeerDisconnectedEvent += NetListenerPeerDisconnectedEvent;
 	}
 
+	public void Stop()
+	{
+		OnStop();
+
+		Manager.DisconnectAll();
+		Manager.Stop();
+
+		NetListener.ConnectionRequestEvent -= NetListenerConnectionRequestEvent;
+		NetListener.PeerConnectedEvent -= NetListenerPeerConnectedEvent;
+		NetListener.PeerDisconnectedEvent -= NetListenerPeerDisconnectedEvent;
+
+		IsRunning = false;
+	}
+
 	private void NetListenerConnectionRequestEvent(ConnectionRequest request) => ConnectionRequestEvent?.Invoke(request);
 	private void NetListenerPeerConnectedEvent(NetPeer peer) => PeerConnectedEvent?.Invoke(peer);
 	private void NetListenerPeerDisconnectedEvent(NetPeer peer, DisconnectInfo disconnectInfo) => PeerDisconnectedEvent?.Invoke(peer, disconnectInfo);
 
-	public void SendPacket<T>(T packet, NetPeer peer) where T : IPacket
+	public void SendMessage<T>(T message, NetPeer peer) where T : IMessage
 	{
-		lock (SendPacketLock)
+		lock (SendMessageLock)
 		{
-			PacketWriter.Reset();
-			WritePacket(packet);
-			peer.Send(PacketWriter, DeliveryMethod.ReliableOrdered);
+			MessageWriter.Reset();
+			WriteMessage(message);
+			peer.Send(MessageWriter, DeliveryMethod.ReliableOrdered);
 		}
 	}
 
-	public void SendPacket<T>(T packet, IEnumerable<NetPeer> peers) where T : IPacket
+	public void SendMessage<T>(T message, IEnumerable<NetPeer> peers) where T : IMessage
 	{
-		lock (SendPacketLock)
+		lock (SendMessageLock)
 		{
-			PacketWriter.Reset();
-			WritePacket(packet);
+			MessageWriter.Reset();
+			WriteMessage(message);
 			foreach (var peer in peers)
 			{
-				peer.Send(PacketWriter, DeliveryMethod.ReliableOrdered);
+				peer.Send(MessageWriter, DeliveryMethod.ReliableOrdered);
 			}
 		}
 	}
@@ -100,6 +122,9 @@ public class NetServer : NetBase
 
 public class NetClient : NetBase
 {
+	public event NetEvents.OnPeerConnected ConnectedEvent;
+	public event NetEvents.OnPeerDisconnected DisconnectedEvent;
+
 	public void Connect(string address, int port, string key)
 	{
 		IsRunning = true;
@@ -107,12 +132,28 @@ public class NetClient : NetBase
 		Manager.Connect(address, port, key);
 
 		OnStart();
+
+		NetListener.PeerConnectedEvent += NetListener_PeerConnectedEvent;
+		NetListener.PeerDisconnectedEvent += NetListener_OnPeerDisconnectedEvent;
 	}
 
-	public void Send(IPacket packet)
+	public void Disconnect()
 	{
-		PacketWriter.Reset();
-		WritePacket(packet);
-		Manager.FirstPeer.Send(PacketWriter, DeliveryMethod.ReliableOrdered);
+		OnStop();
+
+		NetListener.PeerConnectedEvent -= NetListener_PeerConnectedEvent;
+		NetListener.PeerDisconnectedEvent -= NetListener_OnPeerDisconnectedEvent;
+	}
+
+	private void NetListener_OnPeerDisconnectedEvent(NetPeer peer, DisconnectInfo disconnectinfo) =>
+		DisconnectedEvent?.Invoke(peer, disconnectinfo);
+
+	private void NetListener_PeerConnectedEvent(NetPeer peer) => ConnectedEvent?.Invoke(peer);
+
+	public void Send(IMessage message)
+	{
+		MessageWriter.Reset();
+		WriteMessage(message);
+		Manager.FirstPeer.Send(MessageWriter, DeliveryMethod.ReliableOrdered);
 	}
 }

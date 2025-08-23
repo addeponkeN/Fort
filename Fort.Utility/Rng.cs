@@ -1,6 +1,4 @@
-﻿//using Microsoft.Xna.Framework;
-
-namespace Fort.Utility;
+﻿namespace Fort.Utility;
 
 public static class Rng
 {
