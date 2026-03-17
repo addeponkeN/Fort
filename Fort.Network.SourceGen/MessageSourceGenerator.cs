@@ -1,6 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
+﻿using System.Collections.Generic;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -12,175 +10,185 @@ namespace Fort.Network.SourceGen;
 [Generator]
 public class MessageSourceGenerator : ISourceGenerator
 {
-	public void Initialize(GeneratorInitializationContext context)
-	{
-		context.RegisterForSyntaxNotifications(() => new MessageSyntaxReceiver());
-	}
+    public void Initialize(GeneratorInitializationContext context)
+    {
+        context.RegisterForSyntaxNotifications(() => new MessageSyntaxReceiver());
+    }
 
-	public void Execute(GeneratorExecutionContext context)
-	{
-		if (!(context.SyntaxReceiver is MessageSyntaxReceiver receiver))
-			return;
+    public void Execute(GeneratorExecutionContext context)
+    {
+        if (context.SyntaxReceiver is not MessageSyntaxReceiver receiver)
+            return;
 
-		// groupby - avoid dupes
-		var structGroups = receiver.CandidateStructs
-			.GroupBy(s => s.Identifier.ValueText)
-			.ToList();
+        foreach (var structDeclaration in receiver.CandidateStructs)
+        {
+            var semanticModel = context.Compilation.GetSemanticModel(structDeclaration.SyntaxTree);
+            var structSymbol = semanticModel.GetDeclaredSymbol(structDeclaration) as INamedTypeSymbol;
 
-		foreach (var structGroup in structGroups)
-		{
-			var firstStruct = structGroup.First();
-			var semanticModel = context.Compilation.GetSemanticModel(firstStruct.SyntaxTree);
-			var structSymbol = semanticModel.GetDeclaredSymbol(firstStruct) as INamedTypeSymbol;
+            if (structSymbol == null)
+                continue;
 
-			if (structSymbol == null)
-				continue;
+            // Check if struct has [NetData]
+            if (!HasNetDataAttribute(structSymbol))
+                continue;
 
-			// maybe too strict? struct msg must end with 'Message'
-			if (!structSymbol.Name.EndsWith("Message"))
-				continue;
+            var fields = CollectFields(context, structDeclaration);
 
-			// collect all fields of the msg struct
-			var allFields = new List<FieldInfo>();
-			foreach (var structDeclaration in structGroup)
-			{
-				var currentSemanticModel = context.Compilation.GetSemanticModel(structDeclaration.SyntaxTree);
-				foreach (var member in structDeclaration.Members)
-				{
-					if (member is FieldDeclarationSyntax fieldDeclaration)
-					{
-						foreach (var variable in fieldDeclaration.Declaration.Variables)
-						{
-							var fieldName = variable.Identifier.ValueText;
-							if (allFields.All(f => f.Name != fieldName))
-							{
-								var fieldSymbol = currentSemanticModel.GetDeclaredSymbol(variable) as IFieldSymbol;
-								var typeName = fieldDeclaration.Declaration.Type.ToString();
-								allFields.Add(new FieldInfo
-								{
-									Name = fieldName,
-									TypeName = typeName,
-									TypeSymbol = fieldSymbol?.Type
-								});
-							}
-						}
-					}
-				}
-			}
+            var source = GenerateMessageImplementation(structSymbol, fields);
 
-			// generate the message .cs file
-			var source = GenerateMessageImplementation(structSymbol, allFields);
-			string fileName = $"{structSymbol.Name}.g.cs";
-			context.AddSource(fileName, SourceText.From(source, Encoding.UTF8));
-			Console.WriteLine($"Generated '{fileName}'");
-		}
-	}
+            var fileName = $"{structSymbol.Name}.g.cs";
+            context.AddSource(fileName, SourceText.From(source, Encoding.UTF8));
+        }
+    }
 
-	private string GenerateMessageImplementation(INamedTypeSymbol structSymbol, List<FieldInfo> fields)
-	{
-		var namespaceName = structSymbol.ContainingNamespace.ToDisplayString();
-		var structName = structSymbol.Name;
+    private static bool HasNetDataAttribute(INamedTypeSymbol symbol)
+    {
+        foreach (var attr in symbol.GetAttributes())
+        {
+            var attrName = attr.AttributeClass?.Name;
 
-		var sb = new StringBuilder();
+            if (attrName == "NetDataAttribute" || attrName == "NetData")
+                return true;
+        }
 
-		// add using
-		sb.AppendLine("using Fort.Network;");
-		sb.AppendLine("using LiteNetLib.Utils;");
-		sb.AppendLine();
+        return false;
+    }
 
-		// add namespace
-		sb.AppendLine($"namespace {namespaceName}");
-		sb.AppendLine("{");
+    private static List<FieldInfo> CollectFields(GeneratorExecutionContext context, StructDeclarationSyntax structDeclaration)
+    {
+        var fields = new List<FieldInfo>();
 
-		// add class & inheritance
-		sb.AppendLine($"    public partial struct {structName} : IMessage");
-		sb.AppendLine("    {");
+        var semanticModel = context.Compilation.GetSemanticModel(structDeclaration.SyntaxTree);
 
-		// serialize method
-		sb.AppendLine("        public void Serialize(NetDataWriter writer)");
-		sb.AppendLine("        {");
-		foreach (var field in fields)
-		{
-			sb.AppendLine($"            {GetSerializeCall(field)};");
-		}
-		sb.AppendLine("        }");
-		sb.AppendLine();
+        foreach (var member in structDeclaration.Members)
+        {
+            if (member is not FieldDeclarationSyntax fieldDeclaration)
+                continue;
 
-		// deserialize method
-		sb.AppendLine("        public void Deserialize(NetDataReader reader)");
-		sb.AppendLine("        {");
-		foreach (var field in fields)
-		{
-			sb.AppendLine($"            {GetDeserializeCall(field)};");
-		}
-		sb.AppendLine("        }");
+            foreach (var variable in fieldDeclaration.Declaration.Variables)
+            {
+                var fieldSymbol = semanticModel.GetDeclaredSymbol(variable) as IFieldSymbol;
 
-		sb.AppendLine("    }");
-		sb.AppendLine("}");
+                if (fieldSymbol == null)
+                    continue;
 
-		return sb.ToString();
-	}
+                fields.Add(new FieldInfo
+                {
+                    Name = fieldSymbol.Name,
+                    TypeName = fieldSymbol.Type.ToDisplayString(),
+                    TypeSymbol = fieldSymbol.Type
+                });
+            }
+        }
 
-	private string GetSerializeCall(FieldInfo field)
-	{
-		return field.TypeName.ToLower() switch
-		{
-			"byte" => $"writer.Put({field.Name})",
-			"sbyte" => $"writer.Put({field.Name})",
-			"bool" => $"writer.Put({field.Name})",
-			"short" => $"writer.Put({field.Name})",
-			"ushort" => $"writer.Put({field.Name})",
-			"int" => $"writer.Put({field.Name})",
-			"uint" => $"writer.Put({field.Name})",
-			"long" => $"writer.Put({field.Name})",
-			"ulong" => $"writer.Put({field.Name})",
-			"float" => $"writer.Put({field.Name})",
-			"double" => $"writer.Put({field.Name})",
-			"string" => $"writer.Put({field.Name})",
-			"char" => $"writer.Put({field.Name})",
-			_ => $"{field.Name}.Serialize(writer)"
-		};
-	}
+        return fields;
+    }
 
-	private string GetDeserializeCall(FieldInfo field)
-	{
-		return field.TypeName.ToLower() switch
-		{
-			"byte" => $"{field.Name} = reader.GetByte()",
-			"sbyte" => $"{field.Name} = reader.GetSByte()",
-			"bool" => $"{field.Name} = reader.GetBool()",
-			"short" => $"{field.Name} = reader.GetShort()",
-			"ushort" => $"{field.Name} = reader.GetUShort()",
-			"int" => $"{field.Name} = reader.GetInt()",
-			"uint" => $"{field.Name} = reader.GetUInt()",
-			"long" => $"{field.Name} = reader.GetLong()",
-			"ulong" => $"{field.Name} = reader.GetULong()",
-			"float" => $"{field.Name} = reader.GetFloat()",
-			"double" => $"{field.Name} = reader.GetDouble()",
-			"string" => $"{field.Name} = reader.GetString()",
-			"char" => $"{field.Name} = reader.GetChar()",
-			_ => $"{field.Name}.Deserialize(reader)"
-		};
-	}
+    private string GenerateMessageImplementation(INamedTypeSymbol structSymbol, List<FieldInfo> fields)
+    {
+        var namespaceName = structSymbol.ContainingNamespace.ToDisplayString();
+        var structName = structSymbol.Name;
 
-	private class FieldInfo
-	{
-		public string Name { get; set; }
-		public string TypeName { get; set; }
-		public ITypeSymbol TypeSymbol { get; set; }
-	}
+        var sb = new StringBuilder();
+
+        sb.AppendLine("using Fort.Network;");
+        sb.AppendLine("using LiteNetLib.Utils;");
+        sb.AppendLine();
+
+        sb.AppendLine($"namespace {namespaceName}");
+        sb.AppendLine("{");
+
+        sb.AppendLine($"    public partial struct {structName} : IMessage");
+        sb.AppendLine("    {");
+
+        sb.AppendLine("        public void Serialize(NetDataWriter writer)");
+        sb.AppendLine("        {");
+
+        foreach (var field in fields)
+        {
+            sb.AppendLine($"            {GetSerializeCall(field)};");
+        }
+
+        sb.AppendLine("        }");
+        sb.AppendLine();
+
+        sb.AppendLine("        public void Deserialize(NetDataReader reader)");
+        sb.AppendLine("        {");
+
+        foreach (var field in fields)
+        {
+            sb.AppendLine($"            {GetDeserializeCall(field)};");
+        }
+
+        sb.AppendLine("        }");
+
+        sb.AppendLine("    }");
+        sb.AppendLine("}");
+
+        return sb.ToString();
+    }
+
+    private string GetSerializeCall(FieldInfo field)
+    {
+        return field.TypeName.ToLower() switch
+        {
+            "byte" => $"writer.Put({field.Name})",
+            "sbyte" => $"writer.Put({field.Name})",
+            "bool" => $"writer.Put({field.Name})",
+            "short" => $"writer.Put({field.Name})",
+            "ushort" => $"writer.Put({field.Name})",
+            "int" => $"writer.Put({field.Name})",
+            "uint" => $"writer.Put({field.Name})",
+            "long" => $"writer.Put({field.Name})",
+            "ulong" => $"writer.Put({field.Name})",
+            "float" => $"writer.Put({field.Name})",
+            "double" => $"writer.Put({field.Name})",
+            "string" => $"writer.Put({field.Name})",
+            "char" => $"writer.Put({field.Name})",
+            _ => $"{field.Name}.Serialize(writer)"
+        };
+    }
+
+    private string GetDeserializeCall(FieldInfo field)
+    {
+        return field.TypeName.ToLower() switch
+        {
+            "byte" => $"{field.Name} = reader.GetByte()",
+            "sbyte" => $"{field.Name} = reader.GetSByte()",
+            "bool" => $"{field.Name} = reader.GetBool()",
+            "short" => $"{field.Name} = reader.GetShort()",
+            "ushort" => $"{field.Name} = reader.GetUShort()",
+            "int" => $"{field.Name} = reader.GetInt()",
+            "uint" => $"{field.Name} = reader.GetUInt()",
+            "long" => $"{field.Name} = reader.GetLong()",
+            "ulong" => $"{field.Name} = reader.GetULong()",
+            "float" => $"{field.Name} = reader.GetFloat()",
+            "double" => $"{field.Name} = reader.GetDouble()",
+            "string" => $"{field.Name} = reader.GetString()",
+            "char" => $"{field.Name} = reader.GetChar()",
+            _ => $"{field.Name}.Deserialize(reader)"
+        };
+    }
+
+    private class FieldInfo
+    {
+        public string Name { get; set; }
+        public string TypeName { get; set; }
+        public ITypeSymbol TypeSymbol { get; set; }
+    }
 }
 
 public class MessageSyntaxReceiver : ISyntaxReceiver
 {
-	public List<StructDeclarationSyntax> CandidateStructs { get; } = [];
+    public List<StructDeclarationSyntax> CandidateStructs { get; } = [];
 
-	public void OnVisitSyntaxNode(SyntaxNode syntaxNode)
-	{
-		if (syntaxNode is StructDeclarationSyntax structDeclaration &&
-			structDeclaration.Modifiers.Any(SyntaxKind.PartialKeyword))
-		{
-			CandidateStructs.Add(structDeclaration);
-		}
-	}
+    public void OnVisitSyntaxNode(SyntaxNode node)
+    {
+        if (node is StructDeclarationSyntax structDecl &&
+            structDecl.Modifiers.Any(SyntaxKind.PartialKeyword) &&
+            structDecl.AttributeLists.Count > 0)
+        {
+            CandidateStructs.Add(structDecl);
+        }
+    }
 }
