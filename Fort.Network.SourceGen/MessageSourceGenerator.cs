@@ -10,6 +10,13 @@ namespace Fort.Network.SourceGen;
 [Generator]
 public class MessageSourceGenerator : ISourceGenerator
 {
+    private void Log(GeneratorExecutionContext context, string id, string title, string text)
+    {
+        context.ReportDiagnostic(Diagnostic.Create(
+            new DiagnosticDescriptor(id, title, text, "GEN", DiagnosticSeverity.Info, true),
+            Location.None));
+    }
+
     public void Initialize(GeneratorInitializationContext context)
     {
         context.RegisterForSyntaxNotifications(() => new MessageSyntaxReceiver());
@@ -19,6 +26,8 @@ public class MessageSourceGenerator : ISourceGenerator
     {
         if (context.SyntaxReceiver is not MessageSyntaxReceiver receiver)
             return;
+
+        Log(context, "GEN001", "NetData Generator running", $"Generating {receiver.CandidateStructs.Count} NetData structs");
 
         foreach (var structDeclaration in receiver.CandidateStructs)
         {
@@ -38,6 +47,8 @@ public class MessageSourceGenerator : ISourceGenerator
 
             var fileName = $"{structSymbol.Name}.g.cs";
             context.AddSource(fileName, SourceText.From(source, Encoding.UTF8));
+
+            Log(context, "GEN002", "NetData Generator running", $"Generated {fileName}");
         }
     }
 
@@ -45,12 +56,10 @@ public class MessageSourceGenerator : ISourceGenerator
     {
         foreach (var attr in symbol.GetAttributes())
         {
-            var attrName = attr.AttributeClass?.Name;
-
-            if (attrName == "NetDataAttribute" || attrName == "NetData")
+            var fullName = attr.AttributeClass?.ToDisplayString();
+            if (fullName == "Fort.Network.NetDataAttribute")
                 return true;
         }
-
         return false;
     }
 

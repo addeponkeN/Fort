@@ -3,6 +3,14 @@ using LiteNetLib.Utils;
 
 namespace Fort.Network;
 
+public enum ConnectionState
+{
+    Disconnected,
+    Connecting,
+    Connected,
+    Disconnecting,
+}
+
 public class NetEvents
 {
 	public delegate void OnConnectionRequest(ConnectionRequest request);
@@ -125,11 +133,15 @@ public class NetClient : NetBase
 	public event NetEvents.OnPeerConnected ConnectedEvent;
 	public event NetEvents.OnPeerDisconnected DisconnectedEvent;
 
+    public ConnectionState State { get; private set; } = ConnectionState.Disconnected;
+
 	public void Connect(string address, int port, string key)
 	{
 		IsRunning = true;
 		Manager.Start();
 		Manager.Connect(address, port, key);
+
+        State = ConnectionState.Connecting;
 
 		OnStart();
 
@@ -138,20 +150,39 @@ public class NetClient : NetBase
 	}
 
 	public void Disconnect()
-	{
+    {
+        IsRunning = false;
+        State = ConnectionState.Disconnecting;
+
 		OnStop();
 
 		NetListener.PeerConnectedEvent -= NetListener_PeerConnectedEvent;
 		NetListener.PeerDisconnectedEvent -= NetListener_OnPeerDisconnectedEvent;
+
+		Manager.DisconnectAll();
+
+		State = ConnectionState.Disconnected;
 	}
 
-	private void NetListener_OnPeerDisconnectedEvent(NetPeer peer, DisconnectInfo disconnectinfo) =>
-		DisconnectedEvent?.Invoke(peer, disconnectinfo);
+	private void NetListener_OnPeerDisconnectedEvent(NetPeer peer, DisconnectInfo disconnectInfo)
+    {
+		State = ConnectionState.Disconnected;
+		DisconnectedEvent?.Invoke(peer, disconnectInfo);
+    }
 
-	private void NetListener_PeerConnectedEvent(NetPeer peer) => ConnectedEvent?.Invoke(peer);
+	private void NetListener_PeerConnectedEvent(NetPeer peer)
+    {
+		State = ConnectionState.Connected;
+        ConnectedEvent?.Invoke(peer);
+    }
 
-	public void Send(IMessage message)
+    public void Send(IMessage message)
 	{
+        if (State != ConnectionState.Connected)
+        {
+            return;
+        }
+
 		MessageWriter.Reset();
 		WriteMessage(message);
 		Manager.FirstPeer.Send(MessageWriter, DeliveryMethod.ReliableOrdered);
